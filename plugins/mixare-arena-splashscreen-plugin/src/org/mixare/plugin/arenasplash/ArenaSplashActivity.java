@@ -18,6 +18,7 @@
  */
 package org.mixare.plugin.arenasplash;
 
+import org.mixare.R;
 import org.mixare.plugin.arenasplash.service.ArenaSplashService;
 
 import android.app.Activity;
