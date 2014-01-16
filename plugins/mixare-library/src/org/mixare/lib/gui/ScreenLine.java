@@ -85,4 +85,14 @@ public class ScreenLine implements Parcelable{
 		x = in.readFloat();
 		y = in.readFloat();
 	}
+	
+    public float getX()
+    {
+        return x;
+    }
+
+    public float getY()
+    {
+        return y;
+    }
 }

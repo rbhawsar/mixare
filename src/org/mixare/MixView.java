@@ -29,6 +29,10 @@ package org.mixare;
 
 import static android.hardware.SensorManager.SENSOR_DELAY_GAME;
 
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.Iterator;
@@ -39,6 +43,7 @@ import org.mixare.data.DataHandler;
 import org.mixare.data.DataSourceList;
 import org.mixare.data.DataSourceStorage;
 import org.mixare.lib.gui.PaintScreen;
+import org.mixare.lib.gui.ScreenLine;
 import org.mixare.lib.marker.Marker;
 import org.mixare.lib.render.Matrix;
 import org.opencv.android.BaseLoaderCallback;
@@ -47,8 +52,12 @@ import org.opencv.android.LoaderCallbackInterface;
 import org.opencv.android.OpenCVLoader;
 import org.opencv.android.CameraBridgeViewBase.CvCameraViewFrame;
 import org.opencv.android.CameraBridgeViewBase.CvCameraViewListener2;
+import org.opencv.android.Utils;
 import org.opencv.core.Mat;
+import org.opencv.core.Point;
+import org.opencv.core.Range;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.SearchManager;
@@ -56,9 +65,12 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Rect;
+import android.graphics.RectF;
 import android.hardware.Camera;
 import android.hardware.GeomagneticField;
 import android.hardware.Sensor;
@@ -67,6 +79,7 @@ import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.location.Location;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.PowerManager;
 import android.os.PowerManager.WakeLock;
 import android.provider.Settings;
@@ -92,6 +105,26 @@ public class MixView extends Activity implements SensorEventListener, OnTouchLis
 {
 
     private AugmentedView augScreen;
+
+    /*
+     * true if user is trying to select a object
+     */
+    private boolean isObjectSelection = false;
+
+    /*
+     * If user is done selecting a object on screen create a bitmap/thumbnail
+     * and show it to user for further user input
+     */
+    private boolean createBitmap = false;
+
+    /*
+     * User selected image used for the
+     */
+    public static Bitmap thumbnail = null;
+
+    private ScreenLine selectionStart = new ScreenLine();
+
+    private ScreenLine selectionEnd = new ScreenLine();
 
     private boolean isInited;
 
@@ -201,6 +234,24 @@ public class MixView extends Activity implements SensorEventListener, OnTouchLis
         return mixViewData;
     }
 
+    /**
+     * Draws the rectangle for the user selected object
+     * 
+     * @param paintScreen
+     */
+    public void drawObjectSelection(PaintScreen paintScreen)
+    {
+        Paint p = new Paint();
+        p.setStyle(Paint.Style.STROKE);
+        p.setColor(Color.GREEN);
+        p.setStrokeWidth(4);
+
+        if (isObjectSelection == true)
+        {
+            paintScreen.getCanvas().drawRect(selectionStart.x, selectionStart.y, selectionEnd.x, selectionEnd.y, p);
+        }
+    }
+
     @Override
     protected void onPause()
     {
@@ -233,6 +284,7 @@ public class MixView extends Activity implements SensorEventListener, OnTouchLis
             {
                 finish();
             }
+
         }
         catch (Exception ex)
         {
@@ -404,7 +456,7 @@ public class MixView extends Activity implements SensorEventListener, OnTouchLis
         super.onDestroy();
         if (mOpenCvCameraView != null)
             mOpenCvCameraView.disableView();
-        
+
     }
 
     /**
@@ -863,7 +915,6 @@ public class MixView extends Activity implements SensorEventListener, OnTouchLis
         }
     }
 
-    @Override
     public boolean onTouchEvent(MotionEvent me)
     {
         try
@@ -872,17 +923,48 @@ public class MixView extends Activity implements SensorEventListener, OnTouchLis
 
             float xPress = me.getX();
             float yPress = me.getY();
-            if (me.getAction() == MotionEvent.ACTION_UP)
-            {
-                getDataView().clickEvent(xPress, yPress);
-            }// TODO add gesture events (low)
+            // check if the user has touched the bitmap
 
+            if (getThumbnail() != null)
+            {
+                if (xPress >= MixView.getdWindow().getWidth() - getThumbnail().getWidth()
+                        && yPress >= MixView.getdWindow().getHeight() - getThumbnail().getHeight())
+                {
+                    isObjectSelection = false;
+                    // THumbnail has been touched.
+                    // Launch the activity to give item a name.
+
+                    Intent itemDetailIntent = new Intent(MixView.this, ItemDetail.class);
+                    startActivity(itemDetailIntent);
+
+                }
+            }
+            switch (me.getAction())
+            {
+                case MotionEvent.ACTION_UP:
+                    getDataView().clickEvent(xPress, yPress);
+
+                    if (isObjectSelection == true)
+                        createBitmap = true;
+
+                    isObjectSelection = false;
+                    break;
+                case MotionEvent.ACTION_DOWN:
+                    selectionStart.x = xPress;
+                    selectionStart.y = yPress;
+                    break;
+                case MotionEvent.ACTION_MOVE:
+                    if (getThumbnail() == null)
+                        isObjectSelection = true;
+                    selectionEnd.x = xPress;
+                    selectionEnd.y = yPress;
+                    break;
+            }
             return true;
         }
         catch (Exception ex)
         {
-            // doError(ex);
-            ex.printStackTrace();
+            Log.e(TAG, "in on touch Event", ex);
             return super.onTouchEvent(me);
         }
     }
@@ -1093,7 +1175,7 @@ public class MixView extends Activity implements SensorEventListener, OnTouchLis
         // caller has the to control of zoombar visibility, not setzoom
         // mixViewData.getMyZoomBar().setVisibility(View.INVISIBLE);
         mixViewData.setZoomLevel(String.valueOf(myout));
-        // setZoomLevel, caller has to call refreash download if needed.
+        // setZoomLevel, caller has to call refreash download if needezd.
         // mixViewData.setDownloadThread(new
         // Thread(mixViewData.getMixContext().getDownloadManager()));
         // mixViewData.getDownloadThread().start();
@@ -1120,7 +1202,42 @@ public class MixView extends Activity implements SensorEventListener, OnTouchLis
     public Mat onCameraFrame(CvCameraViewFrame inputFrame)
     {
         Mat rgba = inputFrame.rgba();
+
+        if (createBitmap == true)
+        {
+            try
+            {
+                Point p1 = new Point(selectionStart.x, selectionStart.y);
+                Point p2 = new Point(selectionEnd.x, selectionEnd.y);
+
+                org.opencv.core.Rect rect = new org.opencv.core.Rect(p1, p2);
+                Mat thumnailMat = new Mat(rgba, rect);
+
+                thumbnail = Bitmap.createBitmap(thumnailMat.width(), thumnailMat.height(), Bitmap.Config.ARGB_8888);
+
+                Utils.matToBitmap(thumnailMat, thumbnail);
+
+                createBitmap = false;
+            }
+            catch (Exception ex)
+            {
+                // Toast.makeText(this, "Please try selecting object again!!",
+                // Toast.LENGTH_SHORT).show();
+                Log.e("Mixare", "Error while selecting object", ex);
+            }
+        }
+
         return rgba;
+    }
+
+    public Bitmap getThumbnail()
+    {
+        return thumbnail;
+    }
+
+    public void setThumbnail(Bitmap th)
+    {
+        thumbnail = th;
     }
 
 }
@@ -1355,18 +1472,6 @@ class AugmentedView extends View
     {
         try
         {
-            // if (app.fError) {
-            //
-            // Paint errPaint = new Paint();
-            // errPaint.setColor(Color.RED);
-            // errPaint.setTextSize(16);
-            //
-            // /*Draws the Error code*/
-            // canvas.drawText("ERROR: ", 10, 20, errPaint);
-            // canvas.drawText("" + app.fErrorTxt, 10, 40, errPaint);
-            //
-            // return;
-            // }
 
             app.killOnError();
 
@@ -1379,6 +1484,7 @@ class AugmentedView extends View
             {
                 MixView.getDataView().init(MixView.getdWindow().getWidth(), MixView.getdWindow().getHeight());
             }
+
             if (app.isZoombarVisible())
             {
                 zoomPaint.setColor(Color.WHITE);
@@ -1401,8 +1507,15 @@ class AugmentedView extends View
                 }
                 canvas.drawText(app.getZoomLevel(), (canvas.getWidth()) / 100 * zoomProgress + 20, height, zoomPaint);
             }
-
+            app.drawObjectSelection(MixView.getdWindow());
             MixView.getDataView().draw(MixView.getdWindow());
+
+            if (app.getThumbnail() != null)
+            {
+
+                canvas.drawBitmap(app.getThumbnail(), canvas.getWidth() - app.getThumbnail().getWidth(),
+                        canvas.getHeight() - app.getThumbnail().getHeight(), null);
+            }
         }
         catch (Exception ex)
         {
